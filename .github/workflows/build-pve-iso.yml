@@ -5,7 +5,7 @@ name: Build Latest PVE Unattended ISO
 on:
   workflow_dispatch:  # 手动触发（重点，可随时跑）
   schedule:
-    - cron: '0 14 * * *'  # UTC时间14点=北京时间22点？不对，UTC+8=北京时间，所以0 18 * * * 是北京时间凌晨2点
+    - cron: '0 18 * * *'  # UTC时间18点 = 北京时间凌晨2点（UTC+8）
   push:
     branches: [ main ]
     paths:
@@ -24,14 +24,21 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 步骤2：安装依赖（添加Proxmox源，安装构建工具）
+      # 步骤2：安装依赖（修复权限问题 + 稳定添加Proxmox源）
       - name: Install Dependencies
         run: |
-          # 添加Proxmox官方源（获取proxmox-auto-install-assistant）
+          # 1. 添加Proxmox官方源（带sudo，确保写入权限）
           echo "deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription" | sudo tee /etc/apt/sources.list.d/pve.list
-          wget https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg -O /etc/apt/trusted.gpg.d/proxmox-release-bookworm.gpg
-          sudo apt update
-          # 安装必要工具
+          # 2. 下载Proxmox GPG密钥（加sudo，解决权限拒绝）
+          sudo wget https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg -O /etc/apt/trusted.gpg.d/proxmox-release-bookworm.gpg
+          # 3. 验证密钥文件是否存在（可选，增加容错）
+          if [ ! -f "/etc/apt/trusted.gpg.d/proxmox-release-bookworm.gpg" ]; then
+            echo "GPG密钥下载失败！"
+            exit 1
+          fi
+          # 4. 更新apt缓存（加sudo，避免权限问题）
+          sudo apt update -y
+          # 5. 安装必要工具（加sudo）
           sudo apt install -y wget proxmox-auto-install-assistant grep sed sort
 
       # 步骤3：自动获取最新PVE ISO版本（核心：爬取官网ISO列表，取最新）
@@ -66,8 +73,8 @@ jobs:
       - name: Build Unattended ISO
         run: |
           cd /tmp/pve-iso
-          # 调用工具，整合TOML配置生成无人值守ISO
-          proxmox-auto-install-assistant prepare-iso ${{ steps.get_iso.outputs.latest_iso }} \
+          # 调用工具，整合TOML配置生成无人值守ISO（加sudo，避免工具执行权限问题）
+          sudo proxmox-auto-install-assistant prepare-iso ${{ steps.get_iso.outputs.latest_iso }} \
             --fetch-from iso \
             --answer-file $GITHUB_WORKSPACE/pve-unattended.toml
           # 重命名ISO（加版本号，方便识别）
