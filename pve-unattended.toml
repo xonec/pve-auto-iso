@@ -17,7 +17,8 @@ source = "from-dhcp"           # from-dhcp（DHCP 模式）或 from-answer（静
 [disk-setup]
 filesystem = "ext4"         # 带引号（字符串）
 disk_list = ["sda"]         # 数组+字符串（虚拟机vda/物理机sda）
-lvm.hdsize = 238            # 去掉引号！纯数字（256G盘填238）
-lvm.swap = 2                # 去掉引号！纯数字（2G交换分区）
-lvm.root_maxsize = 40       # 去掉引号！纯数字（40G系统分区）
-lvm.free = 2    
+lvm.hdsize = 238            
+lvm.swapsize = 2            
+lvm.maxroot = 40            
+lvm.minfree = 2             
+lvm.maxvz = 0      
