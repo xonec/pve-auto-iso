@@ -1,0 +1,22 @@
+[global]
+keyboard = "en-us"
+country = "cn"
+hostname = "pve-auto-node"
+email = "root@localhost"
+timezone = "Asia/Shanghai"
+root_password = "Pve@2025!!"  # 务必改成自己的复杂密码
+
+[network]
+# 静态IP配置（国内推荐，改成你的网段）
+ip = "192.168.1.100/24"
+gateway = "192.168.1.1"
+dns = "223.5.5.5,114.114.114.114"
+# dhcp = true  # 如需DHCP，注释上面3行，取消这行注释
+
+[disk-setup]
+filesystem = "ext4"
+disk_list = ["vda"]  # 虚拟机用vda，物理机改sda
+lvm.hdsize = "238"   # 256G盘，128G改119，512G改498
+lvm.swap = "2"
+lvm.root_maxsize = "40"
+lvm.free = "2"
