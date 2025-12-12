@@ -1,10 +1,11 @@
+# PVE 9.x 自动化安装配置文件（适配 proxmox-auto-install-assistant 字段要求）
 [global]
-keyboard = "en-us"
-country = "cn"
-hostname = "pve"
-email = "root@localhost"
-timezone = "Asia/Shanghai"
-root_password = "Pve@2025!!"  # 务必改成自己的复杂密码
+keyboard = "en-us"          # 键盘布局（工具识别）
+country = "cn"              # 地区（工具识别）
+fqdn = "pve.test.local"     # 替换原hostname，必须是FQDN（主机名+域名，如pve.test.local）
+mailto = "root@localhost"   # 替换原email，工具识别的字段是mailto
+timezone = "Asia/Shanghai"  # 时区（工具识别）
+root_password = "Pve@2025!!"# 管理员密码（必须改复杂密码）
 
 [network]
 # 静态IP配置（国内推荐，改成你的网段）
@@ -15,7 +16,7 @@ dhcp = true  # 如需DHCP，注释上面3行，取消这行注释
 
 [disk-setup]
 filesystem = "ext4"
-disk_list = ["vda"]  # 虚拟机用vda，物理机改sda
+disk_list = ["sda"]  # 虚拟机用vda，物理机改sda
 lvm.hdsize = "238"   # 256G盘，128G改119，512G改498
 lvm.swap = "2"
 lvm.root_maxsize = "40"
