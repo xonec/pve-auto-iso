@@ -15,9 +15,9 @@ source = "from-dhcp"           # from-dhcp（DHCP 模式）或 from-answer（静
 # dns = "223.5.5.5,114.114.114.114" # 国内DNS（不变）
 
 [disk-setup]
-filesystem = "ext4"
-disk_list = ["sda"]  # 虚拟机用vda，物理机改sda
-lvm.hdsize = "238"   # 256G盘，128G改119，512G改498
-lvm.swap = "2"
-lvm.root_maxsize = "40"
-lvm.free = "2"
+filesystem = "ext4"         # 带引号（字符串）
+disk_list = ["sda"]         # 数组+字符串（虚拟机vda/物理机sda）
+lvm.hdsize = 238            # 去掉引号！纯数字（256G盘填238）
+lvm.swap = 2                # 去掉引号！纯数字（2G交换分区）
+lvm.root_maxsize = 40       # 去掉引号！纯数字（40G系统分区）
+lvm.free = 2    
