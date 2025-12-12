@@ -1,0 +1,101 @@
+# 工作流名称
+name: Build Latest PVE Unattended ISO
+
+# 触发条件：手动触发、每天凌晨2点检查新版本、仓库push
+on:
+  workflow_dispatch:  # 手动触发（重点，可随时跑）
+  schedule:
+    - cron: '0 14 * * *'  # UTC时间14点=北京时间22点？不对，UTC+8=北京时间，所以0 18 * * * 是北京时间凌晨2点
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/build-pve-iso.yml'
+      - 'pve-unattended.toml'
+
+# 工作流任务
+jobs:
+  build-iso:
+    runs-on: ubuntu-latest  # 使用Ubuntu最新版作为构建环境
+    permissions:
+      contents: write  # 授予上传Releases的权限
+
+    steps:
+      # 步骤1：拉取仓库代码（获取TOML配置）
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # 步骤2：安装依赖（添加Proxmox源，安装构建工具）
+      - name: Install Dependencies
+        run: |
+          # 添加Proxmox官方源（获取proxmox-auto-install-assistant）
+          echo "deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription" | sudo tee /etc/apt/sources.list.d/pve.list
+          wget https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg -O /etc/apt/trusted.gpg.d/proxmox-release-bookworm.gpg
+          sudo apt update
+          # 安装必要工具
+          sudo apt install -y wget proxmox-auto-install-assistant grep sed sort
+
+      # 步骤3：自动获取最新PVE ISO版本（核心：爬取官网ISO列表，取最新）
+      - name: Get Latest PVE ISO Version
+        id: get_iso
+        run: |
+          # 爬取Proxmox ISO下载页，提取所有ISO文件名，按版本号排序取最新
+          ISO_LIST=$(curl -s https://enterprise.proxmox.com/iso/ | grep -o 'proxmox-ve_[0-9.]*-[0-9]*.iso' | sort -Vr)
+          LATEST_ISO=$(echo "$ISO_LIST" | head -n 1)
+          # 提取版本号（比如从proxmox-ve_9.1-1.iso提取9.1-1）
+          VERSION=$(echo $LATEST_ISO | sed 's/proxmox-ve_//; s/.iso//')
+          # 输出变量，供后续步骤使用
+          echo "latest_iso=$LATEST_ISO" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "最新PVE ISO版本：$LATEST_ISO（版本号：$VERSION）"
+
+      # 步骤4：下载最新PVE原版ISO
+      - name: Download Latest PVE ISO
+        run: |
+          # 创建ISO存放目录
+          mkdir -p /tmp/pve-iso
+          cd /tmp/pve-iso
+          # 下载原版ISO
+          wget --no-clobber https://enterprise.proxmox.com/iso/${{ steps.get_iso.outputs.latest_iso }}
+          # 验证文件是否下载成功
+          if [ ! -f "${{ steps.get_iso.outputs.latest_iso }}" ]; then
+            echo "ISO下载失败！"
+            exit 1
+          fi
+
+      # 步骤5：制作无人值守ISO（整合TOML配置）
+      - name: Build Unattended ISO
+        run: |
+          cd /tmp/pve-iso
+          # 调用工具，整合TOML配置生成无人值守ISO
+          proxmox-auto-install-assistant prepare-iso ${{ steps.get_iso.outputs.latest_iso }} \
+            --fetch-from iso \
+            --answer-file $GITHUB_WORKSPACE/pve-unattended.toml
+          # 重命名ISO（加版本号，方便识别）
+          AUTO_ISO_NAME="proxmox-ve_${{ steps.get_iso.outputs.version }}-auto-install.iso"
+          mv $(ls *-auto-from-iso.iso) $AUTO_ISO_NAME
+          # 输出最终ISO名称
+          echo "auto_iso_name=$AUTO_ISO_NAME" >> $GITHUB_ENV
+          echo "无人值守ISO生成完成：$AUTO_ISO_NAME"
+
+      # 步骤6：上传ISO到GitHub Releases
+      - name: Upload ISO to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.get_iso.outputs.version }}  # 按PVE版本打标签
+          name: PVE ${{ steps.get_iso.outputs.version }} 无人值守安装镜像
+          body: |
+            🚀 PVE ${{ steps.get_iso.outputs.version }} 无人值守安装ISO（适配国内场景）
+            - 时区：Asia/Shanghai
+            - 网络：静态IP（192.168.1.100/24，可修改TOML后重新构建）
+            - 密码：需修改TOML中的root_password后使用
+          files: /tmp/pve-iso/${{ env.auto_iso_name }}  # 要上传的ISO文件路径
+          draft: false  # 不设为草稿，直接发布
+          prerelease: false
+
+      # 步骤7：保存ISO作为工作流产物（可选，方便临时下载）
+      - name: Upload ISO as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pve-auto-install-iso
+          path: /tmp/pve-iso/${{ env.auto_iso_name }}
+          retention-days: 7  # 产物保留7天（避免占空间）
