@@ -15,7 +15,7 @@ on:
 # 工作流任务
 jobs:
   build-iso:
-    runs-on: ubuntu-latest  # 使用Ubuntu最新版作为构建环境
+    runs-on: debian-latest  # 核心修改：改用Debian最新版作为构建环境
     permissions:
       contents: write  # 授予上传Releases的权限
 
@@ -24,33 +24,35 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 步骤2：安装依赖（修复权限问题 + 稳定添加Proxmox源）
+      # 步骤2：安装依赖（适配Debian，保留之前的修复点）
       - name: Install Dependencies
         run: |
-          # 1. 添加Proxmox官方源（带sudo，确保写入权限）
+          # 1. 更新Debian系统基础包（Debian默认更新频率低，先更基础包）
+          sudo apt update -y -qq
+          sudo apt upgrade -y -qq
+          # 2. 添加Proxmox官方源（Debian bookworm适配PVE 9.x）
           echo "deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription" | sudo tee /etc/apt/sources.list.d/pve.list
-          # 2. 下载Proxmox GPG密钥（加sudo，解决权限拒绝）
+          # 3. 下载Proxmox GPG密钥（解决权限+验证）
           sudo wget https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg -O /etc/apt/trusted.gpg.d/proxmox-release-bookworm.gpg
-          # 3. 验证密钥文件是否存在（可选，增加容错）
+          # 4. 验证密钥文件
           if [ ! -f "/etc/apt/trusted.gpg.d/proxmox-release-bookworm.gpg" ]; then
             echo "GPG密钥下载失败！"
             exit 1
           fi
-          # 4. 更新apt缓存（加sudo，避免权限问题）
-          sudo apt update -y
-          # 5. 安装必要工具（加sudo）
-          sudo apt install -y wget proxmox-auto-install-assistant grep sed sort
+          # 5. 更新包含Proxmox源的apt缓存
+          sudo apt update -y -qq
+          # 6. 安装必要工具（Debian自带sort，仅装需要的包）
+          sudo apt install -y -qq wget proxmox-auto-install-assistant grep sed
 
-      # 步骤3：自动获取最新PVE ISO版本（核心：爬取官网ISO列表，取最新）
+      # 步骤3：自动获取最新PVE ISO版本
       - name: Get Latest PVE ISO Version
         id: get_iso
         run: |
-          # 爬取Proxmox ISO下载页，提取所有ISO文件名，按版本号排序取最新
+          # 爬取Proxmox ISO下载页，提取最新版本
           ISO_LIST=$(curl -s https://enterprise.proxmox.com/iso/ | grep -o 'proxmox-ve_[0-9.]*-[0-9]*.iso' | sort -Vr)
           LATEST_ISO=$(echo "$ISO_LIST" | head -n 1)
-          # 提取版本号（比如从proxmox-ve_9.1-1.iso提取9.1-1）
           VERSION=$(echo $LATEST_ISO | sed 's/proxmox-ve_//; s/.iso//')
-          # 输出变量，供后续步骤使用
+          # 输出变量供后续使用
           echo "latest_iso=$LATEST_ISO" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "最新PVE ISO版本：$LATEST_ISO（版本号：$VERSION）"
@@ -58,29 +60,27 @@ jobs:
       # 步骤4：下载最新PVE原版ISO
       - name: Download Latest PVE ISO
         run: |
-          # 创建ISO存放目录
           mkdir -p /tmp/pve-iso
           cd /tmp/pve-iso
-          # 下载原版ISO
-          wget --no-clobber https://enterprise.proxmox.com/iso/${{ steps.get_iso.outputs.latest_iso }}
-          # 验证文件是否下载成功
+          # 加超时，适配Debian网络环境
+          wget --no-clobber --timeout=300 https://enterprise.proxmox.com/iso/${{ steps.get_iso.outputs.latest_iso }}
+          # 验证下载
           if [ ! -f "${{ steps.get_iso.outputs.latest_iso }}" ]; then
             echo "ISO下载失败！"
             exit 1
           fi
 
-      # 步骤5：制作无人值守ISO（整合TOML配置）
+      # 步骤5：制作无人值守ISO
       - name: Build Unattended ISO
         run: |
           cd /tmp/pve-iso
-          # 调用工具，整合TOML配置生成无人值守ISO（加sudo，避免工具执行权限问题）
+          # Debian下需sudo执行工具，确保权限
           sudo proxmox-auto-install-assistant prepare-iso ${{ steps.get_iso.outputs.latest_iso }} \
             --fetch-from iso \
             --answer-file $GITHUB_WORKSPACE/pve-unattended.toml
-          # 重命名ISO（加版本号，方便识别）
+          # 重命名ISO
           AUTO_ISO_NAME="proxmox-ve_${{ steps.get_iso.outputs.version }}-auto-install.iso"
           mv $(ls *-auto-from-iso.iso) $AUTO_ISO_NAME
-          # 输出最终ISO名称
           echo "auto_iso_name=$AUTO_ISO_NAME" >> $GITHUB_ENV
           echo "无人值守ISO生成完成：$AUTO_ISO_NAME"
 
@@ -88,21 +88,22 @@ jobs:
       - name: Upload ISO to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.get_iso.outputs.version }}  # 按PVE版本打标签
-          name: PVE ${{ steps.get_iso.outputs.version }} 无人值守安装镜像
+          tag_name: v${{ steps.get_iso.outputs.version }}
+          name: PVE ${{ steps.get_iso.outputs.version }} 无人值守安装镜像（Debian构建）
           body: |
-            🚀 PVE ${{ steps.get_iso.outputs.version }} 无人值守安装ISO（适配国内场景）
+            🚀 PVE ${{ steps.get_iso.outputs.version }} 无人值守安装ISO（基于Debian构建，适配国内场景）
             - 时区：Asia/Shanghai
             - 网络：静态IP（192.168.1.100/24，可修改TOML后重新构建）
             - 密码：需修改TOML中的root_password后使用
-          files: /tmp/pve-iso/${{ env.auto_iso_name }}  # 要上传的ISO文件路径
-          draft: false  # 不设为草稿，直接发布
+            - 构建环境：Debian latest（贴合PVE底层系统，兼容性更佳）
+          files: /tmp/pve-iso/${{ env.auto_iso_name }}
+          draft: false
           prerelease: false
 
-      # 步骤7：保存ISO作为工作流产物（可选，方便临时下载）
+      # 步骤7：保存ISO作为工作流产物（可选）
       - name: Upload ISO as Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pve-auto-install-iso
+          name: pve-auto-install-iso-debian
           path: /tmp/pve-iso/${{ env.auto_iso_name }}
-          retention-days: 7  # 产物保留7天（避免占空间）
+          retention-days: 7
