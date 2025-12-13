@@ -15,10 +15,10 @@ source = "from-dhcp"           # from-dhcp（DHCP 模式）或 from-answer（静
 # dns = "223.5.5.5,114.114.114.114" # 国内DNS（不变）
 
 [disk-setup]
-filesystem = "ext4"         # 带引号（字符串）
-disk_list = ["sda"]         # 数组+字符串（虚拟机vda/物理机sda）
-lvm.hdsize = 238            
-lvm.swapsize = 2            
-lvm.maxroot = 40            
-lvm.minfree = 2             
-lvm.maxvz = 0      
+filesystem = "ext4"
+disk_list = ["sda"]
+lvm.hdsize = 500
+lvm.swapsize = 2
+lvm.maxroot = 60
+lvm.minfree = 5
+lvm.maxvz = 0
