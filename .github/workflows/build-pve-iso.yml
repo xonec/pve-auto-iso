@@ -98,10 +98,12 @@ jobs:
             ├─ PVE版本号：${{ steps.get_iso.outputs.version }}
             ├─ 网络地址：${{ steps.read_toml.outputs.addr }}
             ├─ 管理员账号：root
-            └─ 管理员密码：${{ steps.read_toml.outputs.root_pwd }}
+            ├─ 管理员密码：${{ steps.read_toml.outputs.root_pwd }}
+            └─ 适用512G硬盘
           files: /tmp/pve-iso/${{ env.auto_iso_name }}
           draft: false
           prerelease: false
+          overwrite: true
 
       - name: 上传ISO作为工作流临时产物
         uses: actions/upload-artifact@v4
