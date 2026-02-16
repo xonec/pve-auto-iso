@@ -16,7 +16,6 @@ source = "from-dhcp"         # 如果改为 "from-answer"，则必须取消下�
 [disk-setup]
 filesystem = "ext4"
 disk_list = ["sda"]          # 确保目标磁盘确实是 sda，生产环境建议用序列号
-zfs.hdsize = 0               # 非 ZFS 模式下可不写，或保持默认
 lvm.hdsize = 500
 lvm.swapsize = 2
 lvm.maxroot = 60             # 根分区大小 (GB)
