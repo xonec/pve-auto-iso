@@ -1,24 +1,24 @@
-# PVE 9.x 自动化安装配置文件（适配 proxmox-auto-install-assistant 字段要求）
 [global]
-keyboard = "en-us"          # 键盘布局（工具识别）
-country = "cn"              # 地区（工具识别）
-fqdn = "pve.test.local"     # 替换原hostname，必须是FQDN（主机名+域名，如pve.test.local）
-mailto = "root@localhost"   # 替换原email，工具识别的字段是mailto
-timezone = "Asia/Shanghai"  # 时区（工具识别）
-root_password = "Pve@2025!!"# 管理员密码（必须改复杂密码）
+keyboard = "en-us"
+country = "cn"
+fqdn = "pve.test.local"
+mailto = "root@localhost"
+timezone = "Asia/Shanghai"
+root_password = "Pve@2025!!"
+reboot_on_error = false      # 建议初次测试设为 false，方便查看报错
 
 [network]
-# 静态IP配置（工具识别的标准字段）
-source = "from-dhcp"           # from-dhcp（DHCP 模式）或 from-answer（静态 IP 模式）
-# cidr = "192.168.1.100/24"   # 替换原ip字段，工具识别cidr（IP+子网掩码）
-# gateway = "192.168.1.1"     # 网关（不变）
-# dns = "223.5.5.5,114.114.114.114" # 国内DNS（不变）
+source = "from-dhcp"         # 如果改为 "from-answer"，则必须取消下方注释
+# address = "192.168.1.100/24" # 注意：工具较新版本倾向于使用 address 而非 cidr
+# gateway = "192.168.1.1"
+# dns = ["223.5.5.5", "114.114.114.114"] # 数组格式更稳妥
 
 [disk-setup]
 filesystem = "ext4"
-disk_list = ["sda"]
+disk_list = ["sda"]          # 确保目标磁盘确实是 sda，生产环境建议用序列号
+zfs.hdsize = 0               # 非 ZFS 模式下可不写，或保持默认
 lvm.hdsize = 500
 lvm.swapsize = 2
-lvm.maxroot = 60
-lvm.minfree = 5
-lvm.maxvz = 0
+lvm.maxroot = 60             # 根分区大小 (GB)
+lvm.minfree = 10             # 建议预留一点空间用于快照或 LVM 扩展
+lvm.maxvz = 0                # 设为 0 表示不创建 pve-data (适合全给 root)
