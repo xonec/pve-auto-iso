@@ -25,7 +25,6 @@ jobs:
       - name: 检查仓库已发布版本
         id: version_check
         run: |
-          # 获取最近的一个 Release Tag
           LATEST_RELEASE=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | grep 'tag_name' | cut -d'"' -f4 | sed 's/^v//; s/-.*//' || echo "0.0-0")
           if [ "$LATEST_RELEASE" != "${{ steps.get_iso.outputs.version }}" ]; then
             echo "need_build=true" >> $GITHUB_OUTPUT
@@ -45,23 +44,17 @@ jobs:
 
       - name: 安装构建依赖
         run: |
-          # 1. 导入 GPG 密钥并转换为 binary 格式
           curl -fsSL https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/proxmox-release-bookworm.gpg
-          # 2. 添加 PVE 无订阅源
           echo "deb [signed-by=/etc/apt/trusted.gpg.d/proxmox-release-bookworm.gpg] http://download.proxmox.com/debian/pve bookworm pve-no-subscription" | sudo tee /etc/apt/sources.list.d/pve.list
           sudo apt update -y
-          # 3. 安装工具
           sudo apt install -y proxmox-auto-install-assistant mtools libisoburn1 wget
 
       - name: 读取 TOML 配置
         id: read_toml
         run: |
-          # 增强正则，过滤掉可能导致脚本中断的特殊字符
           extract_val() { grep "$1" pve-unattended.toml | sed -E 's/.*=[[:space:]]*"(.*)"/\1/' | tr -d '\r'; }
-          
           ROOT_PWD=$(extract_val "root_password")
           NET_MODE=$(extract_val "source")
-          
           if [ "$NET_MODE" = "from-answer" ]; then
             IP=$(extract_val "cidr")
             ADDR="静态IP: $IP"
@@ -74,42 +67,41 @@ jobs:
       - name: 下载 PVE 原版 ISO
         run: |
           mkdir -p /tmp/pve-iso
-          # 使用官网地址下载
           wget --tries=3 --timeout=300 -O /tmp/pve-iso/pve-original.iso https://enterprise.proxmox.com/iso/${{ needs.check-version.outputs.latest_iso }}
 
       - name: 制作无人值守 ISO
         run: |
-          cd /tmp/pve-iso
-          # 注入 answer 文件
-          sudo proxmox-auto-install-assistant prepare-iso pve-original.iso \
-            --fetch-from iso \
-            --answer-file $GITHUB_WORKSPACE/pve-unattended.toml
+          WORKING_DIR="/tmp/pve-iso"
+          # 强制指定输出文件名，不再让工具随心所欲
+          OUTPUT_PATH="$WORKING_DIR/pve-final-output.iso"
           
-          # 【核心修复】使用通配符匹配生成的 ISO 文件名
-          AUTO_ISO_FILE=$(ls *.auto-from-iso.iso | head -n 1)
-          if [ -z "$AUTO_ISO_FILE" ]; then
-            echo "错误：未找到生成的自动化 ISO 文件！"
+          sudo proxmox-auto-install-assistant prepare-iso $WORKING_DIR/pve-original.iso \
+            --fetch-from iso \
+            --answer-file $GITHUB_WORKSPACE/pve-unattended.toml \
+            --output $OUTPUT_PATH
+          
+          if [ ! -f "$OUTPUT_PATH" ]; then
+            echo "FATAL: 生成文件失败，启动目录深度扫描："
+            ls -R /tmp
             exit 1
           fi
           
           TIMESTAMP=$(date +%Y%m%d)
           FINAL_NAME="pve-ve-${{ needs.check-version.outputs.version }}-auto-512G-${TIMESTAMP}.iso"
-          mv "$AUTO_ISO_FILE" "$FINAL_NAME"
+          mv "$OUTPUT_PATH" "$WORKING_DIR/$FINAL_NAME"
           echo "FINAL_NAME=$FINAL_NAME" >> $GITHUB_ENV
 
       - name: 发布 Release
         uses: softprops/action-gh-release@v2
         with:
-          # Tag 增加时间戳，防止重复构建时 Tag 冲突
           tag_name: v${{ needs.check-version.outputs.version }}-${{ github.run_number }}
-          name: Proxmox VE ${{ needs.check-version.outputs.version }} 自动化镜像
+          name: Proxmox VE ${{ needs.check-version.outputs.version }} 自动化安装镜像
           body: |
-            ## 🚀 自动化构建报告
-            - **PVE 基础版本**: `${{ needs.check-version.outputs.version }}`
-            - **网络配置**: `${{ steps.read_toml.outputs.addr }}`
-            - **Root 默认密码**: `${{ steps.read_toml.outputs.root_pwd }}`
-            - **磁盘优化**: 已适配 512G 硬盘 (MaxRoot: 60G, 剩余空间不分配 LVM-Thin)
-            - **构建时间**: $(date '+%Y-%m-%d %H:%M:%S')
+            ## 🚀 构建完成
+            - **基础镜像**: `${{ needs.check-version.outputs.latest_iso }}`
+            - **网络模式**: `${{ steps.read_toml.outputs.addr }}`
+            - **默认密码**: `${{ steps.read_toml.outputs.root_pwd }}`
+            - **磁盘配置**: 512G 适配 (MaxRoot: 60G, No LVM-Thin)
           files: /tmp/pve-iso/${{ env.FINAL_NAME }}
           draft: false
           prerelease: false
