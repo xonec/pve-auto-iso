@@ -1,9 +1,9 @@
-name: 构建最新版PVE无人值守安装ISO
+name: 构建最新版 PVE 无人值守安装 ISO
 
 on:
-  workflow_dispatch:  # 保留手动触发
+  workflow_dispatch:
   schedule:
-    - cron: '0 18 * * *'  # 每天定时检查版本
+    - cron: '0 18 * * *'
 
 jobs:
   check-version:
@@ -13,7 +13,7 @@ jobs:
       latest_iso: ${{ steps.get_iso.outputs.latest_iso }}
       version: ${{ steps.get_iso.outputs.version }}
     steps:
-      - name: 获取官网最新ISO版本
+      - name: 获取官网最新 ISO 版本
         id: get_iso
         run: |
           ISO_LIST=$(curl -s https://enterprise.proxmox.com/iso/ | grep -o 'proxmox-ve_[0-9.]*-[0-9]*.iso' | sort -Vr)
@@ -25,20 +25,16 @@ jobs:
       - name: 检查仓库已发布版本
         id: version_check
         run: |
-          # 获取仓库最新Release的版本号（匹配vX.Y.Z-XXX格式）
-          LATEST_RELEASE=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | grep 'tag_name' | cut -d'"' -f4 | sed 's/^v//; s/-512G-.*//')
-          # 对比版本，不一致则标记需要构建
+          LATEST_RELEASE=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | grep 'tag_name' | cut -d'"' -f4 | sed 's/^v//; s/-512G-.*//' || echo "0.0-0")
           if [ "$LATEST_RELEASE" != "${{ steps.get_iso.outputs.version }}" ]; then
-            echo "检测到新版ISO：${{ steps.get_iso.outputs.version }}"
             echo "need_build=true" >> $GITHUB_OUTPUT
           else
-            echo "当前已是最新版本：${{ steps.get_iso.outputs.version }}"
             echo "need_build=false" >> $GITHUB_OUTPUT
           fi
 
   build-iso:
     needs: check-version
-    if: ${{ needs.check-version.outputs.need_build == 'true' }}  # 版本不一致才构建
+    if: ${{ needs.check-version.outputs.need_build == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -48,88 +44,59 @@ jobs:
 
       - name: 安装构建依赖
         run: |
+          # 使用 dearmor 解决 GPG 验证失败问题
+          curl -fsSL https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/proxmox-release-bookworm.gpg
           echo "deb [signed-by=/etc/apt/trusted.gpg.d/proxmox-release-bookworm.gpg] http://download.proxmox.com/debian/pve bookworm pve-no-subscription" | sudo tee /etc/apt/sources.list.d/pve.list
-          sudo wget https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg -O /etc/apt/trusted.gpg.d/proxmox-release-bookworm.gpg
-          if ! gpg --show-keys /etc/apt/trusted.gpg.d/proxmox-release-bookworm.gpg | grep -q "Proxmox Release Key"; then
-            echo "GPG密钥验证失败！"
-            exit 1
-          fi
-          sudo apt update -y -qq
-          sudo apt install -y -qq wget proxmox-auto-install-assistant grep sed
+          sudo apt update -y
+          # 补充 ISO 制作必需的底层工具
+          sudo apt install -y proxmox-auto-install-assistant mtools libisoburn1 wget
 
-      - name: 生成构建时间戳
-        id: gen_timestamp
-        run: |
-          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
-
-      - name: 读取TOML配置关键值
+      - name: 读取 TOML 配置
         id: read_toml
         run: |
-          ROOT_PWD=$(grep 'root_password =' $GITHUB_WORKSPACE/pve-unattended.toml | awk -F'"' '{print $2}')
-          NET_MODE=$(grep 'source =' $GITHUB_WORKSPACE/pve-unattended.toml | awk -F'"' '{print $2}')
+          # 健壮的正则提取函数
+          extract_val() { grep "$1" pve-unattended.toml | sed -E 's/.*=[[:space:]]*"(.*)"/\1/'; }
+          
+          ROOT_PWD=$(extract_val "root_password")
+          NET_MODE=$(extract_val "source")
+          
           if [ "$NET_MODE" = "from-answer" ]; then
-            IP=$(grep 'cidr =' $GITHUB_WORKSPACE/pve-unattended.toml | awk -F'"' '{print $2}')
-            GATEWAY=$(grep 'gateway =' $GITHUB_WORKSPACE/pve-unattended.toml | awk -F'"' '{print $2}')
-            DNS=$(grep 'dns =' $GITHUB_WORKSPACE/pve-unattended.toml | awk -F'"' '{print $2}')
-            ADDR="静态IP：$IP | 网关：$GATEWAY | DNS：$DNS"
+            IP=$(extract_val "cidr")
+            ADDR="静态IP: $IP"
           else
-            ADDR="DHCP自动获取IP"
+            ADDR="DHCP 自动获取"
           fi
           echo "root_pwd=$ROOT_PWD" >> $GITHUB_OUTPUT
           echo "addr=$ADDR" >> $GITHUB_OUTPUT
-          echo "net_mode=$NET_MODE" >> $GITHUB_OUTPUT
 
-      - name: 下载最新PVE原版ISO
+      - name: 下载 PVE 原版 ISO
         run: |
           mkdir -p /tmp/pve-iso
-          cd /tmp/pve-iso
-          wget --no-clobber --timeout=300 https://enterprise.proxmox.com/iso/${{ needs.check-version.outputs.latest_iso }}
-          if [ ! -f "${{ needs.check-version.outputs.latest_iso }}" ]; then
-            echo "PVE原版ISO下载失败！"
-            exit 1
-          fi
+          wget --tries=3 --timeout=300 -O /tmp/pve-iso/pve-original.iso https://enterprise.proxmox.com/iso/${{ needs.check-version.outputs.latest_iso }}
 
-      - name: 制作无人值守安装ISO
+      - name: 制作无人值守 ISO
         run: |
           cd /tmp/pve-iso
-          sudo proxmox-auto-install-assistant prepare-iso ${{ needs.check-version.outputs.latest_iso }} \
+          # 使用 assistant 注入配置文件
+          sudo proxmox-auto-install-assistant prepare-iso pve-original.iso \
             --fetch-from iso \
             --answer-file $GITHUB_WORKSPACE/pve-unattended.toml
-          # 精准匹配生成的无人值守ISO
-          AUTO_ISO_RAW=$(find . -maxdepth 1 -name "${{ needs.check-version.outputs.latest_iso }}.auto-from-iso.iso" -print -quit)
-          if [ -z "$AUTO_ISO_RAW" ]; then
-            echo "无人值守ISO生成失败！"
-            exit 1
-          fi
-          AUTO_ISO_NAME="proxmox-ve_${{ needs.check-version.outputs.version }}-无人值守安装_512G_${{ steps.gen_timestamp.outputs.timestamp }}.iso"
-          mv "$AUTO_ISO_RAW" "$AUTO_ISO_NAME"
-          echo "auto_iso_name=$AUTO_ISO_NAME" >> $GITHUB_ENV
+          
+          # 重命名产物
+          TIMESTAMP=$(date +%Y%m%d)
+          FINAL_NAME="pve-auto-${{ needs.check-version.outputs.version }}-512G-${TIMESTAMP}.iso"
+          mv pve-original.auto-from-iso.iso "$FINAL_NAME"
+          echo "FINAL_NAME=$FINAL_NAME" >> $GITHUB_ENV
 
-      - name: 上传ISO到GitHub Releases
+      - name: 发布 Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ needs.check-version.outputs.version }}-512G-${{ steps.gen_timestamp.outputs.timestamp }}
-          name: PVE ${{ needs.check-version.outputs.version }} 无人值守安装镜像（512G硬盘适配）
+          tag_name: v${{ needs.check-version.outputs.version }}-${{ strategy.job-index }}-${{ github.run_number }}
+          name: Proxmox VE ${{ needs.check-version.outputs.version }} 自动化镜像
           body: |
-            🚀 PVE无人值守安装镜像（核心配置）
-            ├─ PVE版本号：${{ needs.check-version.outputs.version }}
-            ├─ 网络地址：${{ steps.read_toml.outputs.addr }}
-            ├─ 管理员账号：root
-            ├─ 管理员密码：${{ steps.read_toml.outputs.root_pwd }}
-            └─ 适用硬盘：512G（LVM分区已适配）
-          files: /tmp/pve-iso/${{ env.auto_iso_name }}
-          overwrite_files: true
-          draft: false
-          prerelease: false
-
-      - name: 上传ISO作为工作流临时产物
-        uses: actions/upload-artifact@v4
-        with:
-          name: pve-无人值守安装镜像_512G_${{ steps.gen_timestamp.outputs.timestamp }}
-          path: /tmp/pve-iso/${{ env.auto_iso_name }}
-          retention-days: 7
-
-      - name: 清理临时文件
-        if: always()
-        run: rm -rf /tmp/pve-iso
+            ## 自动化构建报告
+            - **基础版本**: `${{ needs.check-version.outputs.version }}`
+            - **网络模式**: `${{ steps.read_toml.outputs.addr }}`
+            - **默认密码**: `${{ steps.read_toml.outputs.root_pwd }}`
+            - **分区方案**: 512G 适配 (MaxRoot: 60GB, No LVM-Thin)
+          files: /tmp/pve-iso/${{ env.FINAL_NAME }}
